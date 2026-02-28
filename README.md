@@ -165,7 +165,7 @@ embedder:
 
 llm:
   provider: openai              # openai | local
-  model: gpt-4o-mini
+  model: gpt-5-nano
   api_key_env: OPENAI_API_KEY
 
 chunker:

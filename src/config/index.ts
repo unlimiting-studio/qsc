@@ -15,7 +15,7 @@ const EmbedderConfigSchema = z.object({
 
 const LLMConfigSchema = z.object({
   provider: z.enum(["openai", "local"]).default("openai"),
-  model: z.string().default("gpt-4o-mini"),
+  model: z.string().default("gpt-5-nano"),
   api_key_env: z.string().default("OPENAI_API_KEY"),
 });
 
