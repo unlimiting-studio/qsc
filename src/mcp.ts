@@ -204,7 +204,7 @@ export async function startMcpServer(): Promise<void> {
           .min(1)
           .max(100)
           .optional()
-          .describe("Maximum number of results (default: 20)"),
+          .describe("Maximum number of results (default: 10)"),
       }),
     },
     async ({ query, limit }) => {
@@ -215,7 +215,7 @@ export async function startMcpServer(): Promise<void> {
         };
       }
 
-      const results = store.searchBM25(query, limit ?? 20);
+      const results = store.searchBM25(query, limit ?? 10);
 
       if (results.length === 0) {
         return { content: [{ type: "text" as const, text: "No results found." }] };
@@ -246,7 +246,7 @@ export async function startMcpServer(): Promise<void> {
           .min(1)
           .max(100)
           .optional()
-          .describe("Maximum number of results (default: 20)"),
+          .describe("Maximum number of results (default: 10)"),
         expand: z
           .boolean()
           .optional()
@@ -272,7 +272,7 @@ export async function startMcpServer(): Promise<void> {
 
       const response = await sp.search(query, {
         mode,
-        limit: limit ?? 20,
+        limit: limit ?? 10,
         expand: shouldExpand,
         rerank: shouldRerank,
       });

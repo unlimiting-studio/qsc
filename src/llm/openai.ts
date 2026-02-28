@@ -61,35 +61,56 @@ export function createOpenAILLM(config: LLMConfig): LLMProvider {
     async rerank(query: string, documents: string[]): Promise<number[]> {
       if (documents.length === 0) return [];
 
-      const scores: number[] = [];
+      const BATCH_SIZE = 5;
+      const batches: string[][] = [];
+      for (let i = 0; i < documents.length; i += BATCH_SIZE) {
+        batches.push(documents.slice(i, i + BATCH_SIZE));
+      }
 
-      for (const doc of documents) {
-        const prompt = `You are a relevance scoring system. Given a search query and a code snippet, rate the relevance of the code snippet to the query on a scale from 0.0 to 1.0, where 0.0 means completely irrelevant and 1.0 means perfectly relevant.
+      const batchResults = await Promise.all(
+        batches.map(async (batch): Promise<number[]> => {
+          try {
+            const snippetParts = batch
+              .map((doc, idx) => `Snippet ${idx + 1}:\n\`\`\`\n${doc}\n\`\`\``)
+              .join("\n\n");
+
+            const prompt = `You are a relevance scoring system. Given a search query and multiple code snippets, rate the relevance of each snippet to the query on a scale from 0.0 to 1.0.
 
 Query: ${query}
 
-Code snippet:
-\`\`\`
-${doc}
-\`\`\`
+${snippetParts}
 
-Respond with ONLY a single decimal number between 0.0 and 1.0. No other text.`;
+Respond with ONLY the scores as comma-separated decimal numbers in order. Example: 0.8, 0.3, 0.9`;
 
-        const response = await callWithRetry(() =>
-          client.chat.completions.create({
-            model,
-            messages: [{ role: "user", content: prompt }],
-            temperature: 0.0,
-            max_tokens: 10,
-          }),
-        );
+            const response = await callWithRetry(() =>
+              client.chat.completions.create({
+                model,
+                messages: [{ role: "user", content: prompt }],
+                temperature: 0.0,
+                max_tokens: 50,
+              }),
+            );
 
-        const text = response.choices[0]?.message?.content?.trim() ?? "0";
-        const score = parseFloat(text);
-        scores.push(Number.isFinite(score) ? Math.max(0, Math.min(1, score)) : 0);
-      }
+            const text = response.choices[0]?.message?.content?.trim() ?? "";
+            const parsed = text.split(",").map((s) => {
+              const score = parseFloat(s.trim());
+              return Number.isFinite(score) ? Math.max(0, Math.min(1, score)) : 0;
+            });
 
-      return scores;
+            // Pad with 0 if fewer scores than expected
+            while (parsed.length < batch.length) {
+              parsed.push(0);
+            }
+
+            return parsed.slice(0, batch.length);
+          } catch {
+            // Batch failure: return 0 for all documents in this batch
+            return batch.map(() => 0);
+          }
+        }),
+      );
+
+      return batchResults.flat();
     },
   };
 
