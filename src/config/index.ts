@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { readFileSync, existsSync } from "node:fs";
-import { resolve } from "node:path";
+import { resolve, join } from "node:path";
+import { homedir } from "node:os";
 import { parse as parseYaml } from "yaml";
 
 // --- Zod schemas ---
@@ -98,27 +99,85 @@ function applyEnvOverrides(raw: Record<string, unknown>): Record<string, unknown
   return result;
 }
 
-// --- Public API ---
+// --- Deep merge ---
 
-const CONFIG_FILENAMES = ["qsc.yml", "qsc.yaml"];
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
 
 /**
- * Load configuration from a qsc.yml file, apply environment variable
- * overrides, validate with zod, and return the merged config with defaults.
+ * Deep merge two plain objects. Values in `override` take precedence.
+ * Arrays are replaced (not concatenated).
  */
-export function loadConfig(basePath?: string): QSCConfig {
-  const dir = basePath ?? process.cwd();
-  let raw: Record<string, unknown> = {};
+function deepMerge(
+  base: Record<string, unknown>,
+  override: Record<string, unknown>,
+): Record<string, unknown> {
+  const result: Record<string, unknown> = { ...base };
+  for (const key of Object.keys(override)) {
+    if (isPlainObject(base[key]) && isPlainObject(override[key])) {
+      result[key] = deepMerge(
+        base[key] as Record<string, unknown>,
+        override[key] as Record<string, unknown>,
+      );
+    } else {
+      result[key] = override[key];
+    }
+  }
+  return result;
+}
 
-  for (const name of CONFIG_FILENAMES) {
-    const filePath = resolve(dir, name);
+// --- YAML file loading helpers ---
+
+const CONFIG_EXTENSIONS = [".yml", ".yaml"];
+
+function getQscHome(): string {
+  return resolve(homedir(), ".qsc");
+}
+
+/**
+ * Try to read a YAML config file with either .yml or .yaml extension.
+ * Returns the parsed object or an empty object if the file doesn't exist.
+ */
+function readYamlConfig(pathWithoutExt: string): Record<string, unknown> {
+  for (const ext of CONFIG_EXTENSIONS) {
+    const filePath = pathWithoutExt + ext;
     if (existsSync(filePath)) {
       const content = readFileSync(filePath, "utf-8");
-      raw = (parseYaml(content) as Record<string, unknown>) ?? {};
-      break;
+      return (parseYaml(content) as Record<string, unknown>) ?? {};
+    }
+  }
+  return {};
+}
+
+// --- Public API ---
+
+/**
+ * Load configuration from ~/.qsc/ directory with layered overrides:
+ *
+ * 1. Global defaults: ~/.qsc/config.yml (or .yaml)
+ * 2. Collection override: ~/.qsc/collections/<collectionName>.yml (or .yaml)
+ * 3. Environment variables: QSC_* env vars (highest priority)
+ *
+ * @param collectionName - Optional collection name for collection-specific overrides
+ */
+export function loadConfig(collectionName?: string): QSCConfig {
+  const qscHome = getQscHome();
+
+  // 1. Load global config: ~/.qsc/config.yml
+  const globalConfigBase = join(qscHome, "config");
+  let raw: Record<string, unknown> = readYamlConfig(globalConfigBase);
+
+  // 2. Merge collection-specific config: ~/.qsc/collections/<name>.yml
+  if (collectionName) {
+    const collectionConfigBase = join(qscHome, "collections", collectionName);
+    const collectionRaw = readYamlConfig(collectionConfigBase);
+    if (Object.keys(collectionRaw).length > 0) {
+      raw = deepMerge(raw, collectionRaw);
     }
   }
 
+  // 3. Apply environment variable overrides (highest priority)
   const withEnv = applyEnvOverrides(raw);
   return QSCConfigSchema.parse(withEnv);
 }

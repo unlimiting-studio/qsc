@@ -181,7 +181,7 @@ async function cmdInit(positional: string[], flags: Record<string, string | bool
   ensureQscHome();
 
   const dbPath = getCollectionDbPath(name);
-  const config = loadConfig(absSourcePath);
+  const config = loadConfig(name);
 
   // Create DB and initialize schema
   const store = createStore(dbPath);
@@ -220,7 +220,7 @@ async function cmdIndex(positional: string[], _flags: Record<string, string | bo
 
   const dbPath = resolveCollectionDb(name);
   const sourcePath = resolveCollectionSourcePath(name);
-  const config = loadConfig(sourcePath);
+  const config = loadConfig(name);
   const store = openStore(dbPath, config);
   const repoId = getRepoId(sourcePath);
 
@@ -293,7 +293,7 @@ async function cmdEmbed(positional: string[], flags: Record<string, string | boo
 
   const dbPath = resolveCollectionDb(name);
   const sourcePath = resolveCollectionSourcePath(name);
-  const config = loadConfig(sourcePath);
+  const config = loadConfig(name);
   const store = openStore(dbPath, config);
 
   try {
@@ -374,7 +374,7 @@ async function cmdUpdate(positional: string[], flags: Record<string, string | bo
 
   const dbPath = resolveCollectionDb(name);
   const sourcePath = resolveCollectionSourcePath(name);
-  const config = loadConfig(sourcePath);
+  const config = loadConfig(name);
   const store = openStore(dbPath, config);
   const repoId = getRepoId(sourcePath);
 
@@ -591,7 +591,7 @@ async function cmdSearch(positional: string[], flags: Record<string, string | bo
 
   const dbPath = resolveCollectionDb(name);
   const sourcePath = resolveCollectionSourcePath(name);
-  const config = loadConfig(sourcePath);
+  const config = loadConfig(name);
   const store = openStore(dbPath, config);
 
   try {
@@ -622,7 +622,7 @@ async function cmdQuery(positional: string[], flags: Record<string, string | boo
 
   const dbPath = resolveCollectionDb(name);
   const sourcePath = resolveCollectionSourcePath(name);
-  const config = loadConfig(sourcePath);
+  const config = loadConfig(name);
   const store = openStore(dbPath, config);
 
   try {
@@ -674,7 +674,7 @@ async function cmdGet(positional: string[], _flags: Record<string, string | bool
 
   const dbPath = resolveCollectionDb(name);
   const sourcePath = resolveCollectionSourcePath(name);
-  const config = loadConfig(sourcePath);
+  const config = loadConfig(name);
   const store = openStore(dbPath, config);
   const repoId = getRepoId(sourcePath);
 
@@ -720,7 +720,7 @@ async function cmdStatus(positional: string[], _flags: Record<string, string | b
 
   const dbPath = resolveCollectionDb(name);
   const sourcePath = resolveCollectionSourcePath(name);
-  const config = loadConfig(sourcePath);
+  const config = loadConfig(name);
   const store = openStore(dbPath, config);
 
   try {

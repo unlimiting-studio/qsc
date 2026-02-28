@@ -11,7 +11,7 @@ import { createSearchPipeline, type SearchPipeline, type SearchResult } from "./
 import { createEmbedder, type Embedder } from "./embedder/index.js";
 import { createLLMProvider, type LLMProvider } from "./llm/index.js";
 import { loadConfig } from "./config/index.js";
-import { resolveCollectionDb, resolveCollectionSourcePath } from "./collection.js";
+import { resolveCollectionDb } from "./collection.js";
 
 // --- Helpers ---
 
@@ -36,16 +36,8 @@ function resolveDbPathFromCollection(collectionName?: string): string {
   );
 }
 
-function resolveConfigPath(collectionName?: string): string | undefined {
-  const name = collectionName ?? process.env.QSC_COLLECTION;
-  if (name) {
-    try {
-      return resolveCollectionSourcePath(name);
-    } catch {
-      return undefined;
-    }
-  }
-  return undefined;
+function resolveConfigCollectionName(collectionName?: string): string | undefined {
+  return collectionName ?? process.env.QSC_COLLECTION ?? undefined;
 }
 
 function getVersion(): string {
@@ -136,8 +128,8 @@ export async function startMcpServer(): Promise<void> {
     process.exit(1);
   }
 
-  const configPath = resolveConfigPath(collectionName);
-  const config = loadConfig(configPath);
+  const configCollectionName = resolveConfigCollectionName(collectionName);
+  const config = loadConfig(configCollectionName);
   const version = getVersion();
   const displayName = collectionName ?? process.env.QSC_COLLECTION ?? "default";
 
