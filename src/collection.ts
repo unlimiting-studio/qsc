@@ -8,6 +8,7 @@ export interface CollectionMeta {
   dbPath: string;
   sourcePath: string;
   createdAt: string;
+  updateCommand?: string;
 }
 
 export interface CollectionRegistry {
@@ -91,6 +92,7 @@ export function registerCollection(
   name: string,
   sourcePath: string,
   dbPath?: string,
+  updateCommand?: string,
 ): CollectionMeta {
   ensureQscHome();
 
@@ -100,8 +102,37 @@ export function registerCollection(
     sourcePath: resolve(sourcePath),
     createdAt: new Date().toISOString(),
   };
+  if (updateCommand !== undefined) {
+    meta.updateCommand = updateCommand;
+  }
 
   const registry = readRegistry();
+  registry[name] = meta;
+  writeRegistry(registry);
+
+  return meta;
+}
+
+export function updateCollectionMeta(
+  name: string,
+  updates: Partial<Pick<CollectionMeta, "updateCommand">>,
+): CollectionMeta {
+  const registry = readRegistry();
+  const meta = registry[name];
+  if (!meta) {
+    throw new Error(
+      `Collection '${name}' not found. Run 'qsc init ${name} <path>' first.`,
+    );
+  }
+
+  if (updates.updateCommand !== undefined) {
+    if (updates.updateCommand === "") {
+      delete meta.updateCommand;
+    } else {
+      meta.updateCommand = updates.updateCommand;
+    }
+  }
+
   registry[name] = meta;
   writeRegistry(registry);
 

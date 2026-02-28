@@ -2,7 +2,7 @@
 
 import { resolve, basename } from "node:path";
 import { existsSync, readFileSync } from "node:fs";
-import { createStore, type Store } from "./store.js";
+import { createStore, type Store, formatChunkForEmbedding } from "./store.js";
 import { createChunker } from "./chunker/index.js";
 import { createEmbedder, type Embedder } from "./embedder/index.js";
 import { createLLMProvider } from "./llm/index.js";
@@ -22,7 +22,9 @@ import {
   copyCollection,
   importCollection,
   exportCollection,
+  updateCollectionMeta,
 } from "./collection.js";
+import { execSync } from "node:child_process";
 
 // --- Argument Parsing ---
 
@@ -161,12 +163,12 @@ function printBenchmark(response: SearchResponse): void {
 
 // --- Commands ---
 
-async function cmdInit(positional: string[], _flags: Record<string, string | boolean>): Promise<void> {
+async function cmdInit(positional: string[], flags: Record<string, string | boolean>): Promise<void> {
   const name = positional[0];
   const sourcePath = positional[1];
 
   if (!name || !sourcePath) {
-    console.error("Usage: qsc init <name> <path>");
+    console.error("Usage: qsc init <name> <path> [--update-cmd <command>]");
     process.exit(1);
   }
 
@@ -194,13 +196,19 @@ async function cmdInit(positional: string[], _flags: Record<string, string | boo
 
   store.close();
 
-  // Register collection
-  registerCollection(name, absSourcePath, dbPath);
+  // Register collection with optional updateCommand
+  const updateCmd = hasFlag(flags, "update-cmd")
+    ? getFlag(flags, "update-cmd", "")
+    : undefined;
+  registerCollection(name, absSourcePath, dbPath, updateCmd || undefined);
 
   console.log(`Collection '${name}' initialized.`);
   console.log(`  Database: ${dbPath}`);
   console.log(`  Source:   ${absSourcePath}`);
   console.log(`  Embedding dimensions: ${config.embedder.dimensions}`);
+  if (updateCmd) {
+    console.log(`  Update command: ${updateCmd}`);
+  }
 }
 
 async function cmdIndex(positional: string[], _flags: Record<string, string | boolean>): Promise<void> {
@@ -300,9 +308,7 @@ async function cmdEmbed(positional: string[], flags: Record<string, string | boo
       const chunks = store.getUnembeddedChunks(batchSize);
       if (chunks.length === 0) break;
 
-      const texts = chunks.map((c) =>
-        c.name ? `${c.name}\n${c.content}` : c.content,
-      );
+      const texts = chunks.map((c) => formatChunkForEmbedding(c));
 
       const vectors = await embedder.embed(texts);
 
@@ -329,6 +335,41 @@ async function cmdUpdate(positional: string[], flags: Record<string, string | bo
   if (!name) {
     console.error("Usage: qsc update <name>");
     process.exit(1);
+  }
+
+  // Run pre-update command if configured
+  const collectionMeta = getCollection(name);
+  if (!collectionMeta) {
+    console.error(`Collection '${name}' not found. Run 'qsc init ${name} <path>' first.`);
+    process.exit(1);
+  }
+
+  if (collectionMeta.updateCommand) {
+    const cmd = collectionMeta.updateCommand;
+    console.log(`Running pre-update command: ${cmd}`);
+    console.log(`  Working directory: ${collectionMeta.sourcePath}`);
+    try {
+      const output = execSync(cmd, {
+        cwd: collectionMeta.sourcePath,
+        timeout: 60_000,
+        stdio: "pipe",
+        encoding: "utf-8",
+      });
+      if (output.trim()) {
+        console.log(output.trimEnd());
+      }
+      console.log("Pre-update command completed successfully.\n");
+    } catch (err) {
+      const execErr = err as { status?: number; stderr?: string; stdout?: string };
+      console.error(`Warning: Pre-update command failed (exit code: ${execErr.status ?? "unknown"})`);
+      if (execErr.stderr) {
+        console.error(execErr.stderr.trimEnd());
+      }
+      if (execErr.stdout) {
+        console.log(execErr.stdout.trimEnd());
+      }
+      console.error("Continuing with update...\n");
+    }
   }
 
   const dbPath = resolveCollectionDb(name);
@@ -746,6 +787,29 @@ async function cmdList(): Promise<void> {
     console.log(`    Source: ${meta.sourcePath}`);
     console.log(`    DB:     ${meta.dbPath}`);
     console.log(`    Created: ${meta.createdAt}`);
+    if (meta.updateCommand) {
+      console.log(`    Update cmd: ${meta.updateCommand}`);
+    }
+  }
+}
+
+async function cmdSetUpdateCmd(positional: string[], _flags: Record<string, string | boolean>): Promise<void> {
+  const name = positional[0];
+  const cmd = positional.slice(1).join(" ");
+
+  if (!name) {
+    console.error("Usage: qsc set-update-cmd <collection> <command>");
+    console.error("       qsc set-update-cmd <collection>           (removes the command)");
+    process.exit(1);
+  }
+
+  const updateCommand = cmd || "";
+  const meta = updateCollectionMeta(name, { updateCommand });
+
+  if (updateCommand) {
+    console.log(`Update command for '${name}' set to: ${updateCommand}`);
+  } else {
+    console.log(`Update command for '${name}' has been removed.`);
   }
 }
 
@@ -811,6 +875,7 @@ Commands:
   get <name> <file-path>                Get file info and chunks
   status <name>                         Show index statistics
   list                                  List all collections
+  set-update-cmd <name> <command>       Set a pre-update command for a collection
   copy <source> <dest> <path>           Copy a collection DB to a new collection
   import <name> <sqlite-path> <path>    Import an external SQLite DB as a collection
   export <name> <output-path>           Export a collection's SQLite DB
@@ -821,6 +886,7 @@ Commands:
 Options:
   --limit <n>         Max results for search/query (default: 10)
   --batch <n>         Batch size for embed (default: 100)
+  --update-cmd <cmd>  Set pre-update command (init command)
   --no-expand         Disable query expansion (query command)
   --no-rerank         Disable LLM reranking (query command)
   --benchmark         Show timing info for search/query
@@ -867,6 +933,9 @@ async function main(): Promise<void> {
         break;
       case "list":
         await cmdList();
+        break;
+      case "set-update-cmd":
+        await cmdSetUpdateCmd(positional, flags);
         break;
       case "copy":
         await cmdCopy(positional);

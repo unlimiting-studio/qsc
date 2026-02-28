@@ -52,6 +52,7 @@ export interface UnembeddedChunk {
   name: string | null;
   chunk_type: string | null;
   file_path: string;
+  language: string | null;
   repo_id: string;
 }
 
@@ -113,6 +114,26 @@ export interface Store {
   getFileByPath(repoId: string, path: string): FileRow | undefined;
   getChunksByFileId(fileId: number): ChunkRow[];
   close(): void;
+}
+
+// --- Embedding text formatting ---
+
+/**
+ * Format a chunk with contextual metadata for embedding.
+ * The resulting string includes file path, language, chunk type, and name
+ * as a prefix before the actual code content, so that the embedding model
+ * captures contextual information alongside the raw code.
+ *
+ * Format: "file: <path> | language: <lang> | type: <type> | name: <name> | code: <content>"
+ */
+export function formatChunkForEmbedding(chunk: UnembeddedChunk): string {
+  const parts: string[] = [];
+  if (chunk.file_path) parts.push(`file: ${chunk.file_path}`);
+  if (chunk.language) parts.push(`language: ${chunk.language}`);
+  if (chunk.chunk_type) parts.push(`type: ${chunk.chunk_type}`);
+  if (chunk.name) parts.push(`name: ${chunk.name}`);
+  parts.push(`code: ${chunk.content}`);
+  return parts.join(" | ");
 }
 
 // --- Schema SQL ---
@@ -292,6 +313,7 @@ function prepareStatements(db: DatabaseType): Statements {
         c.name,
         c.chunk_type,
         f.path AS file_path,
+        f.language,
         f.repo_id
       FROM chunks c
       JOIN files f ON c.file_id = f.id
