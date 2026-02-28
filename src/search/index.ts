@@ -7,6 +7,7 @@ import { expandQuery, type ExpandedQuery } from "./expander.js";
 import { reciprocalRankFusion } from "./fusion.js";
 import { rerank, type RerankedResult } from "./reranker.js";
 import type { FusedResult } from "./fusion.js";
+import { applyFilters, hasFilters, type QueryFilters } from "./filter.js";
 
 // --- Public types ---
 
@@ -26,6 +27,7 @@ export interface SearchOptions {
   rerank?: boolean;
   rrfK?: number;
   benchmark?: boolean;
+  filters?: QueryFilters;
 }
 
 export interface SearchResult {
@@ -79,7 +81,10 @@ export function createSearchPipeline(
       options: SearchOptions = { mode: "hybrid" },
     ): Promise<SearchResponse> {
       const limit = options.limit ?? 20;
-      const fetchLimit = limit * 3; // Fetch more for fusion/reranking
+      const filters = options.filters;
+      const hasActiveFilters = filters != null && hasFilters(filters);
+      // Fetch more when filters are active since post-filtering may reduce result count
+      const fetchLimit = hasActiveFilters ? limit * 10 : limit * 3;
       const bench = options.benchmark ?? false;
 
       const timing: SearchTiming = { total: 0 };
@@ -148,10 +153,13 @@ export function createSearchPipeline(
       {
         const t0 = bench ? performance.now() : 0;
 
+        // When filters are active, pass fetchLimit to RRF to get more candidates
+        const fusionLimit = hasActiveFilters ? fetchLimit : (options.rerank ? fetchLimit : limit);
+
         if (options.mode === "bm25") {
           fused = reciprocalRankFusion(bm25Lists, [], {
             k: options.rrfK,
-            limit: options.rerank ? fetchLimit : limit,
+            limit: fusionLimit,
           });
         } else if (options.mode === "vector") {
           if (vectorLists.length === 0) {
@@ -160,16 +168,21 @@ export function createSearchPipeline(
           }
           fused = reciprocalRankFusion([], vectorLists, {
             k: options.rrfK,
-            limit: options.rerank ? fetchLimit : limit,
+            limit: fusionLimit,
           });
         } else {
           fused = reciprocalRankFusion(bm25Lists, vectorLists, {
             k: options.rrfK,
-            limit: options.rerank ? fetchLimit : limit,
+            limit: fusionLimit,
           });
         }
 
         if (bench) timing.fusion = performance.now() - t0;
+      }
+
+      // Step 3.5: Apply inline filters (post-filtering by filePath)
+      if (hasActiveFilters) {
+        fused = applyFilters(fused, filters!);
       }
 
       // Step 4: (Optional) LLM reranking
@@ -221,3 +234,5 @@ export type { VectorSearchResult } from "./vector.js";
 export type { ExpandedQuery, ExpandedQueryType } from "./expander.js";
 export type { FusedResult } from "./fusion.js";
 export type { RerankedResult } from "./reranker.js";
+export { parseQuery, applyFilters, matchesFilters, hasFilters } from "./filter.js";
+export type { ParsedQuery, QueryFilters } from "./filter.js";

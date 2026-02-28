@@ -9,6 +9,7 @@ import { expandQuery } from "../src/search/expander.js";
 import { reciprocalRankFusion } from "../src/search/fusion.js";
 import { rerank } from "../src/search/reranker.js";
 import { createSearchPipeline } from "../src/search/index.js";
+import { parseQuery, matchesFilters, applyFilters, hasFilters, type QueryFilters } from "../src/search/filter.js";
 import type { Embedder } from "../src/embedder/index.js";
 import type { LLMProvider, GenerateOptions } from "../src/llm/index.js";
 import { unlinkSync } from "node:fs";
@@ -395,6 +396,327 @@ async function testEdgeCases() {
   }
 }
 
+async function testParseQuery() {
+  console.log("\n[Query Parser]");
+
+  // Basic: no filters
+  {
+    const result = parseQuery("hello world");
+    assert(result.text === "hello world", "No filters: text preserved");
+    assert(!hasFilters(result.filters), "No filters: filters are empty");
+  }
+
+  // Single path filter
+  {
+    const result = parseQuery("auth path:src/api");
+    assert(result.text === "auth", "Path filter: text extracted");
+    assert(result.filters.includePaths.length === 1, "Path filter: one include path");
+    assert(result.filters.includePaths[0] === "src/api", "Path filter: correct path value");
+  }
+
+  // Exclude path filter
+  {
+    const result = parseQuery("auth -path:vendor");
+    assert(result.text === "auth", "Exclude path: text extracted");
+    assert(result.filters.excludePaths.length === 1, "Exclude path: one exclude path");
+    assert(result.filters.excludePaths[0] === "vendor", "Exclude path: correct value");
+  }
+
+  // Extension filter with dot
+  {
+    const result = parseQuery("auth ext:.ts");
+    assert(result.text === "auth", "Ext filter: text extracted");
+    assert(result.filters.includeExts[0] === ".ts", "Ext filter: normalized with dot");
+  }
+
+  // Extension filter without dot (normalize)
+  {
+    const result = parseQuery("auth ext:ts");
+    assert(result.filters.includeExts[0] === ".ts", "Ext without dot: normalized to .ts");
+  }
+
+  // Multi-part extension
+  {
+    const result = parseQuery("auth -ext:.test.ts");
+    assert(result.filters.excludeExts[0] === ".test.ts", "Multi-part ext: preserved");
+  }
+
+  // File filter
+  {
+    const result = parseQuery("auth file:config.ts");
+    assert(result.text === "auth", "File filter: text extracted");
+    assert(result.filters.includeFiles[0] === "config.ts", "File filter: correct value");
+  }
+
+  // Exclude file filter
+  {
+    const result = parseQuery("auth -file:package.json");
+    assert(result.filters.excludeFiles[0] === "package.json", "Exclude file: correct value");
+  }
+
+  // Multiple same-type filters (OR)
+  {
+    const result = parseQuery("auth path:src/api path:src/auth ext:.ts");
+    assert(result.text === "auth", "Multiple filters: text extracted");
+    assert(result.filters.includePaths.length === 2, "Multiple paths: two include paths");
+    assert(result.filters.includeExts.length === 1, "Multiple filters: one include ext");
+  }
+
+  // Complex combined query
+  {
+    const result = parseQuery("auth path:src/api path:src/auth ext:.ts -path:vendor -ext:.test.ts");
+    assert(result.text === "auth", "Complex: text extracted");
+    assert(result.filters.includePaths.length === 2, "Complex: 2 include paths");
+    assert(result.filters.excludePaths.length === 1, "Complex: 1 exclude path");
+    assert(result.filters.includeExts.length === 1, "Complex: 1 include ext");
+    assert(result.filters.excludeExts.length === 1, "Complex: 1 exclude ext");
+  }
+
+  // Only filters, no text
+  {
+    const result = parseQuery("path:src ext:.ts");
+    assert(result.text === "", "Only filters: empty text");
+    assert(hasFilters(result.filters), "Only filters: filters present");
+  }
+
+  // Empty input
+  {
+    const result = parseQuery("");
+    assert(result.text === "", "Empty input: empty text");
+    assert(!hasFilters(result.filters), "Empty input: no filters");
+  }
+
+  // Filter prefix with no value (treated as text)
+  {
+    const result = parseQuery("auth path:");
+    assert(result.text === "auth path:", "Empty filter value: treated as text");
+    assert(result.filters.includePaths.length === 0, "Empty filter value: no path added");
+  }
+
+  // Multi-word text with filters interspersed
+  {
+    const result = parseQuery("user auth path:src login");
+    assert(result.text === "user auth login", "Interspersed: text tokens joined correctly");
+    assert(result.filters.includePaths[0] === "src", "Interspersed: filter extracted correctly");
+  }
+}
+
+async function testMatchesFilters() {
+  console.log("\n[Filter Matching]");
+
+  // Path include
+  {
+    const filters: QueryFilters = { includePaths: ["src/api"], excludePaths: [], includeExts: [], excludeExts: [], includeFiles: [], excludeFiles: [] };
+    assert(matchesFilters("src/api/auth.ts", filters) === true, "Path include: matches prefix");
+    assert(matchesFilters("src/api", filters) === true, "Path include: exact match");
+    assert(matchesFilters("src/utils/helper.ts", filters) === false, "Path include: non-matching path");
+    assert(matchesFilters("src/apix/foo.ts", filters) === false, "Path include: partial prefix rejected");
+  }
+
+  // Multiple path includes (OR)
+  {
+    const filters: QueryFilters = { includePaths: ["src/api", "src/auth"], excludePaths: [], includeExts: [], excludeExts: [], includeFiles: [], excludeFiles: [] };
+    assert(matchesFilters("src/api/auth.ts", filters) === true, "Multi path OR: first matches");
+    assert(matchesFilters("src/auth/login.ts", filters) === true, "Multi path OR: second matches");
+    assert(matchesFilters("src/utils/helper.ts", filters) === false, "Multi path OR: none matches");
+  }
+
+  // Path exclude
+  {
+    const filters: QueryFilters = { includePaths: [], excludePaths: ["vendor"], includeExts: [], excludeExts: [], includeFiles: [], excludeFiles: [] };
+    assert(matchesFilters("vendor/lib.js", filters) === false, "Path exclude: excluded");
+    assert(matchesFilters("src/api.ts", filters) === true, "Path exclude: non-excluded passes");
+  }
+
+  // Extension include
+  {
+    const filters: QueryFilters = { includePaths: [], excludePaths: [], includeExts: [".ts"], excludeExts: [], includeFiles: [], excludeFiles: [] };
+    assert(matchesFilters("src/auth.ts", filters) === true, "Ext include: .ts matches");
+    assert(matchesFilters("src/auth.js", filters) === false, "Ext include: .js rejected");
+  }
+
+  // Extension exclude
+  {
+    const filters: QueryFilters = { includePaths: [], excludePaths: [], includeExts: [], excludeExts: [".test.ts"], includeFiles: [], excludeFiles: [] };
+    assert(matchesFilters("src/auth.test.ts", filters) === false, "Ext exclude: .test.ts excluded");
+    assert(matchesFilters("src/auth.ts", filters) === true, "Ext exclude: .ts passes");
+  }
+
+  // File include
+  {
+    const filters: QueryFilters = { includePaths: [], excludePaths: [], includeExts: [], excludeExts: [], includeFiles: ["config.ts"], excludeFiles: [] };
+    assert(matchesFilters("src/config.ts", filters) === true, "File include: matches basename");
+    assert(matchesFilters("config.ts", filters) === true, "File include: exact path");
+    assert(matchesFilters("src/auth.ts", filters) === false, "File include: non-matching rejected");
+  }
+
+  // File exclude
+  {
+    const filters: QueryFilters = { includePaths: [], excludePaths: [], includeExts: [], excludeExts: [], includeFiles: [], excludeFiles: ["package.json"] };
+    assert(matchesFilters("package.json", filters) === false, "File exclude: exact match excluded");
+    assert(matchesFilters("sub/package.json", filters) === false, "File exclude: nested excluded");
+    assert(matchesFilters("src/auth.ts", filters) === true, "File exclude: non-matching passes");
+  }
+
+  // Cross-type AND: path AND ext
+  {
+    const filters: QueryFilters = { includePaths: ["src"], excludePaths: [], includeExts: [".ts"], excludeExts: [], includeFiles: [], excludeFiles: [] };
+    assert(matchesFilters("src/auth.ts", filters) === true, "Cross-type AND: both match");
+    assert(matchesFilters("src/auth.js", filters) === false, "Cross-type AND: ext fails");
+    assert(matchesFilters("lib/auth.ts", filters) === false, "Cross-type AND: path fails");
+  }
+
+  // Include AND exclude together
+  {
+    const filters: QueryFilters = { includePaths: ["src"], excludePaths: ["src/vendor"], includeExts: [".ts"], excludeExts: [".test.ts"], includeFiles: [], excludeFiles: [] };
+    assert(matchesFilters("src/auth.ts", filters) === true, "Include+Exclude: passes both");
+    assert(matchesFilters("src/auth.test.ts", filters) === false, "Include+Exclude: ext excluded");
+    assert(matchesFilters("src/vendor/lib.ts", filters) === false, "Include+Exclude: path excluded");
+    assert(matchesFilters("lib/auth.ts", filters) === false, "Include+Exclude: path not included");
+  }
+
+  // No filters: everything passes
+  {
+    const filters: QueryFilters = { includePaths: [], excludePaths: [], includeExts: [], excludeExts: [], includeFiles: [], excludeFiles: [] };
+    assert(matchesFilters("anything.xyz", filters) === true, "No filters: everything passes");
+  }
+}
+
+async function testApplyFilters() {
+  console.log("\n[Apply Filters]");
+
+  const results = [
+    { filePath: "src/api/auth.ts", score: 0.9 },
+    { filePath: "src/api/db.ts", score: 0.8 },
+    { filePath: "src/utils/helper.ts", score: 0.7 },
+    { filePath: "vendor/lib.js", score: 0.6 },
+    { filePath: "src/auth/login.test.ts", score: 0.5 },
+  ];
+
+  // No filters: all pass
+  {
+    const filters: QueryFilters = { includePaths: [], excludePaths: [], includeExts: [], excludeExts: [], includeFiles: [], excludeFiles: [] };
+    const filtered = applyFilters(results, filters);
+    assert(filtered.length === 5, "No filters: all results pass");
+  }
+
+  // Path include
+  {
+    const filters: QueryFilters = { includePaths: ["src/api"], excludePaths: [], includeExts: [], excludeExts: [], includeFiles: [], excludeFiles: [] };
+    const filtered = applyFilters(results, filters);
+    assert(filtered.length === 2, "Path include: only src/api results");
+    assert(filtered.every(r => r.filePath.startsWith("src/api/")), "Path include: all start with src/api/");
+  }
+
+  // Exclude path + ext
+  {
+    const filters: QueryFilters = { includePaths: [], excludePaths: ["vendor"], includeExts: [], excludeExts: [".test.ts"], includeFiles: [], excludeFiles: [] };
+    const filtered = applyFilters(results, filters);
+    assert(filtered.length === 3, "Exclude path+ext: vendor and .test.ts excluded");
+    assert(filtered.every(r => !r.filePath.startsWith("vendor/") && !r.filePath.endsWith(".test.ts")), "Exclude: no excluded results");
+  }
+
+  // (src/api OR src/auth) AND .ts
+  {
+    const filters: QueryFilters = { includePaths: ["src/api", "src/auth"], excludePaths: [], includeExts: [".ts"], excludeExts: [], includeFiles: [], excludeFiles: [] };
+    const filtered = applyFilters(results, filters);
+    assert(filtered.length === 3, "OR paths AND ext: 3 results (auth.ts, db.ts, login.test.ts)");
+  }
+
+  // snake_case file_path support
+  {
+    const snakeResults = [
+      { file_path: "src/api/auth.ts", score: 0.9 },
+      { file_path: "vendor/lib.js", score: 0.6 },
+    ];
+    const filters: QueryFilters = { includePaths: ["src"], excludePaths: [], includeExts: [], excludeExts: [], includeFiles: [], excludeFiles: [] };
+    const filtered = applyFilters(snakeResults, filters);
+    assert(filtered.length === 1, "snake_case: filters work with file_path");
+    assert((filtered[0] as any).file_path === "src/api/auth.ts", "snake_case: correct result");
+  }
+}
+
+async function testPipelineWithFilters() {
+  console.log("\n[Pipeline with Filters]");
+  const { store, dbPath } = createTestDb();
+
+  try {
+    const pipeline = createSearchPipeline(store);
+
+    // BM25 with path filter: only src/auth.ts results
+    const pathFiltered = await pipeline.search("authenticate", {
+      mode: "bm25",
+      limit: 10,
+      filters: {
+        includePaths: ["src"],
+        excludePaths: [],
+        includeExts: [],
+        excludeExts: [],
+        includeFiles: [],
+        excludeFiles: [],
+      },
+    });
+    assert(pathFiltered.results.length > 0, "Pipeline path filter: returns results");
+    assert(pathFiltered.results.every(r => r.filePath.startsWith("src/")), "Pipeline path filter: all in src/");
+
+    // BM25 with exclude file filter
+    const excludeFiltered = await pipeline.search("function", {
+      mode: "bm25",
+      limit: 10,
+      filters: {
+        includePaths: [],
+        excludePaths: [],
+        includeExts: [],
+        excludeExts: [],
+        includeFiles: [],
+        excludeFiles: ["db.ts"],
+      },
+    });
+    assert(excludeFiltered.results.every(r => !r.filePath.endsWith("db.ts")), "Pipeline exclude file: db.ts excluded");
+
+    // BM25 with ext filter
+    const extFiltered = await pipeline.search("function", {
+      mode: "bm25",
+      limit: 10,
+      filters: {
+        includePaths: [],
+        excludePaths: [],
+        includeExts: [".ts"],
+        excludeExts: [],
+        includeFiles: [],
+        excludeFiles: [],
+      },
+    });
+    assert(extFiltered.results.length > 0, "Pipeline ext filter: returns results");
+    assert(extFiltered.results.every(r => r.filePath.endsWith(".ts")), "Pipeline ext filter: all .ts");
+
+    // No filters: same as before
+    const noFilter = await pipeline.search("authenticate", {
+      mode: "bm25",
+      limit: 10,
+    });
+    assert(noFilter.results.length > 0, "Pipeline no filter: returns results normally");
+
+    // Restrictive filter: no results
+    const emptyFiltered = await pipeline.search("authenticate", {
+      mode: "bm25",
+      limit: 10,
+      filters: {
+        includePaths: ["nonexistent"],
+        excludePaths: [],
+        includeExts: [],
+        excludeExts: [],
+        includeFiles: [],
+        excludeFiles: [],
+      },
+    });
+    assert(emptyFiltered.results.length === 0, "Pipeline restrictive filter: no results");
+  } finally {
+    store.close();
+    try { unlinkSync(dbPath); } catch {}
+  }
+}
+
 // --- Run all tests ---
 
 async function main() {
@@ -407,6 +729,10 @@ async function main() {
   await testReranker();
   await testFullPipeline();
   await testEdgeCases();
+  await testParseQuery();
+  await testMatchesFilters();
+  await testApplyFilters();
+  await testPipelineWithFilters();
 
   console.log(`\n=== Results: ${passed} passed, ${failed} failed ===`);
   if (failed > 0) process.exit(1);

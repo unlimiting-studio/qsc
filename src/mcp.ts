@@ -7,7 +7,7 @@ import Database from "better-sqlite3";
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { createStore, type Store, type BM25Result } from "./store.js";
-import { createSearchPipeline, type SearchPipeline, type SearchResult } from "./search/index.js";
+import { createSearchPipeline, parseQuery, applyFilters, hasFilters, type SearchPipeline, type SearchResult } from "./search/index.js";
 import { createEmbedder, type Embedder } from "./embedder/index.js";
 import { createLLMProvider, type LLMProvider } from "./llm/index.js";
 import { loadConfig } from "./config/index.js";
@@ -195,9 +195,10 @@ export async function startMcpServer(): Promise<void> {
       title: "BM25 Search",
       description:
         "Fast full-text search using BM25 ranking. Best for keyword-based queries. " +
-        "Returns matching code chunks with file paths, line numbers, and relevance scores.",
+        "Returns matching code chunks with file paths, line numbers, and relevance scores. " +
+        "Supports inline filters: path:src/api, -path:vendor, ext:.ts, -ext:.test.ts, file:config.ts, -file:package.json",
       inputSchema: z.object({
-        query: z.string().describe("Search query text"),
+        query: z.string().describe("Search query text (supports inline filters like path:src ext:.ts -path:vendor)"),
         limit: z
           .number()
           .int()
@@ -207,15 +208,33 @@ export async function startMcpServer(): Promise<void> {
           .describe("Maximum number of results (default: 10)"),
       }),
     },
-    async ({ query, limit }) => {
-      if (!query.trim()) {
+    async ({ query: rawQuery, limit }) => {
+      if (!rawQuery.trim()) {
         return {
           content: [{ type: "text" as const, text: "Error: query must not be empty" }],
           isError: true,
         };
       }
 
-      const results = store.searchBM25(query, limit ?? 10);
+      const { text: queryText, filters } = parseQuery(rawQuery);
+      if (!queryText) {
+        return {
+          content: [{ type: "text" as const, text: "Error: search text must not be empty (filters alone are not sufficient)" }],
+          isError: true,
+        };
+      }
+
+      const requestedLimit = limit ?? 10;
+      const activeFilters = hasFilters(filters);
+      // Fetch more when filtering to compensate for post-filter reduction
+      const fetchLimit = activeFilters ? requestedLimit * 10 : requestedLimit;
+
+      let results = store.searchBM25(queryText, fetchLimit);
+
+      // Apply inline filters to BM25 results
+      if (activeFilters) {
+        results = applyFilters(results, filters).slice(0, requestedLimit);
+      }
 
       if (results.length === 0) {
         return { content: [{ type: "text" as const, text: "No results found." }] };
@@ -237,9 +256,10 @@ export async function startMcpServer(): Promise<void> {
       title: "Hybrid Search",
       description:
         "Full hybrid search combining BM25, vector similarity, and optional LLM reranking. " +
-        "Best for semantic and complex queries. May be slower than 'search' but provides better results.",
+        "Best for semantic and complex queries. May be slower than 'search' but provides better results. " +
+        "Supports inline filters: path:src/api, -path:vendor, ext:.ts, -ext:.test.ts, file:config.ts, -file:package.json",
       inputSchema: z.object({
-        query: z.string().describe("Search query text"),
+        query: z.string().describe("Search query text (supports inline filters like path:src ext:.ts -path:vendor)"),
         limit: z
           .number()
           .int()
@@ -257,10 +277,18 @@ export async function startMcpServer(): Promise<void> {
           .describe("Enable LLM reranking (default: true if LLM available)"),
       }),
     },
-    async ({ query, limit, expand, rerank }) => {
-      if (!query.trim()) {
+    async ({ query: rawQuery, limit, expand, rerank }) => {
+      if (!rawQuery.trim()) {
         return {
           content: [{ type: "text" as const, text: "Error: query must not be empty" }],
+          isError: true,
+        };
+      }
+
+      const { text: queryText, filters } = parseQuery(rawQuery);
+      if (!queryText) {
+        return {
+          content: [{ type: "text" as const, text: "Error: search text must not be empty (filters alone are not sufficient)" }],
           isError: true,
         };
       }
@@ -270,11 +298,12 @@ export async function startMcpServer(): Promise<void> {
       const shouldExpand = expand ?? !!llmProvider;
       const shouldRerank = rerank ?? !!llmProvider;
 
-      const response = await sp.search(query, {
+      const response = await sp.search(queryText, {
         mode,
         limit: limit ?? 10,
         expand: shouldExpand,
         rerank: shouldRerank,
+        filters,
       });
 
       if (response.results.length === 0) {

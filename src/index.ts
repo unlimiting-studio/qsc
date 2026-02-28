@@ -8,7 +8,7 @@ import { createEmbedder, type Embedder, type EmbedTextMeta } from "./embedder/in
 import { createLLMProvider } from "./llm/index.js";
 import { scanRepository, detectLanguage } from "./scanner/index.js";
 import { detectChanges, getCurrentCommit, isGitRepository } from "./scanner/git.js";
-import { createSearchPipeline, type SearchResult, type SearchResponse, type SearchTiming } from "./search/index.js";
+import { createSearchPipeline, parseQuery, type SearchResult, type SearchResponse, type SearchTiming } from "./search/index.js";
 import { loadConfig, type QSCConfig } from "./config/index.js";
 import { createHash } from "node:crypto";
 import {
@@ -608,9 +608,15 @@ async function cmdUpdate(positional: string[], flags: Record<string, string | bo
 
 async function cmdSearch(positional: string[], flags: Record<string, string | boolean>): Promise<void> {
   const name = positional[0];
-  const query = positional.slice(1).join(" ");
-  if (!name || !query) {
+  const rawQuery = positional.slice(1).join(" ");
+  if (!name || !rawQuery) {
     console.error("Usage: qsc search <name> <query>");
+    process.exit(1);
+  }
+
+  const { text: query, filters } = parseQuery(rawQuery);
+  if (!query) {
+    console.error("Error: search text must not be empty (filters alone are not sufficient)");
     process.exit(1);
   }
 
@@ -628,6 +634,7 @@ async function cmdSearch(positional: string[], flags: Record<string, string | bo
       mode: "bm25",
       limit,
       benchmark,
+      filters,
     });
 
     printResults(response.results, "BM25");
@@ -639,9 +646,15 @@ async function cmdSearch(positional: string[], flags: Record<string, string | bo
 
 async function cmdQuery(positional: string[], flags: Record<string, string | boolean>): Promise<void> {
   const name = positional[0];
-  const query = positional.slice(1).join(" ");
-  if (!name || !query) {
+  const rawQuery = positional.slice(1).join(" ");
+  if (!name || !rawQuery) {
     console.error("Usage: qsc query <name> <query>");
+    process.exit(1);
+  }
+
+  const { text: query, filters } = parseQuery(rawQuery);
+  if (!query) {
+    console.error("Error: search text must not be empty (filters alone are not sufficient)");
     process.exit(1);
   }
 
@@ -680,6 +693,7 @@ async function cmdQuery(positional: string[], flags: Record<string, string | boo
       expand: !noExpand && !!llm,
       rerank: !noRerank && !!llm,
       benchmark,
+      filters,
     });
 
     printResults(response.results, mode);
