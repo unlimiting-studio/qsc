@@ -297,6 +297,13 @@ async function cmdEmbed(positional: string[], flags: Record<string, string | boo
   const store = openStore(dbPath, config);
 
   try {
+    // Check if there are any chunks at all (i.e., index has been run)
+    const stats = store.getStats();
+    if (stats.chunks === 0) {
+      console.log(`No chunks found. Run \`qsc index ${name}\` first.`);
+      return;
+    }
+
     const batchSize = parseInt(getFlag(flags, "batch", "100"), 10);
     const embedder = await createEmbedder(config.embedder);
 
