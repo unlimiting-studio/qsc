@@ -1,6 +1,6 @@
 /**
  * Search pipeline module verification test
- * Run with: npx tsx test/search.test.ts
+ * Run with: npx tsx tests/search.test.ts
  */
 import { createStore, type Store, type BM25Result, type VectorResult } from "../src/store.js";
 import { searchBM25 } from "../src/search/bm25.js";

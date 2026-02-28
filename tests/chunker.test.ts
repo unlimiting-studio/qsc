@@ -1,6 +1,6 @@
 /**
  * Chunker module verification test
- * Run with: npx tsx test/chunker.test.ts
+ * Run with: npx tsx tests/chunker.test.ts
  */
 import { createChunker } from "../src/chunker/index.js";
 import type { Chunk } from "../src/chunker/index.js";

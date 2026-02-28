@@ -1,6 +1,5 @@
 src/
 tests/
-test/
 .github/
 .claude/
 tsconfig.json
