@@ -4,7 +4,7 @@ import { resolve, basename } from "node:path";
 import { existsSync, readFileSync } from "node:fs";
 import { createStore, type Store, formatChunkForEmbedding } from "./store.js";
 import { createChunker } from "./chunker/index.js";
-import { createEmbedder, type Embedder } from "./embedder/index.js";
+import { createEmbedder, type Embedder, type EmbedTextMeta } from "./embedder/index.js";
 import { createLLMProvider } from "./llm/index.js";
 import { scanRepository, detectLanguage } from "./scanner/index.js";
 import { detectChanges, getCurrentCommit, isGitRepository } from "./scanner/git.js";
@@ -317,8 +317,12 @@ async function cmdEmbed(positional: string[], flags: Record<string, string | boo
       if (chunks.length === 0) break;
 
       const texts = chunks.map((c) => formatChunkForEmbedding(c));
+      const meta: EmbedTextMeta[] = chunks.map((c) => ({
+        chunkId: c.chunk_id,
+        filePath: c.file_path,
+      }));
 
-      const vectors = await embedder.embed(texts);
+      const vectors = await embedder.embed(texts, meta);
 
       store.insertEmbeddings(
         chunks.map((c, i) => ({

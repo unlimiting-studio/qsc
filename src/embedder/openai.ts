@@ -1,6 +1,6 @@
 import OpenAI from "openai";
 import type { EmbedderConfig } from "../config/index.js";
-import type { Embedder } from "./index.js";
+import type { Embedder, EmbedTextMeta } from "./index.js";
 
 const MAX_BATCH_SIZE = 2048;
 const MAX_RETRIES = 3;
@@ -136,7 +136,10 @@ export function createOpenAIEmbedder(config: EmbedderConfig): Embedder {
    * When a batch of size 1 still fails, logs a warning and returns a zero
    * vector so the rest of the pipeline can continue.
    */
-  async function embedBatchWithFallback(texts: string[]): Promise<number[][]> {
+  async function embedBatchWithFallback(
+    texts: string[],
+    metaItems?: EmbedTextMeta[],
+  ): Promise<number[][]> {
     try {
       return await embedBatch(texts);
     } catch (error: unknown) {
@@ -149,8 +152,12 @@ export function createOpenAIEmbedder(config: EmbedderConfig): Embedder {
 
       // Single item batch that still fails → skip with zero vector
       if (texts.length <= 1) {
+        const m = metaItems?.[0];
+        const metaInfo = m
+          ? ` [chunk_id=${m.chunkId ?? "?"}, file=${m.filePath ?? "?"}]`
+          : "";
         console.warn(
-          `[qsc] Skipping chunk that exceeds token limit (length=${texts[0]?.length ?? 0}). Returning zero vector.`,
+          `[qsc] Skipping chunk that exceeds token limit (length=${texts[0]?.length ?? 0})${metaInfo}. Returning zero vector.`,
         );
         return [new Array(dimensions).fill(0)];
       }
@@ -159,14 +166,16 @@ export function createOpenAIEmbedder(config: EmbedderConfig): Embedder {
       const mid = Math.ceil(texts.length / 2);
       const firstHalf = texts.slice(0, mid);
       const secondHalf = texts.slice(mid);
+      const firstMeta = metaItems?.slice(0, mid);
+      const secondMeta = metaItems?.slice(mid);
 
       console.warn(
         `[qsc] Batch of ${texts.length} texts failed with 400 error. Splitting into [${firstHalf.length}, ${secondHalf.length}] and retrying.`,
       );
 
       const [firstResults, secondResults] = await Promise.all([
-        embedBatchWithFallback(firstHalf),
-        embedBatchWithFallback(secondHalf),
+        embedBatchWithFallback(firstHalf, firstMeta),
+        embedBatchWithFallback(secondHalf, secondMeta),
       ]);
 
       return [...firstResults, ...secondResults];
@@ -174,7 +183,7 @@ export function createOpenAIEmbedder(config: EmbedderConfig): Embedder {
   }
 
   const embedder: Embedder = {
-    async embed(texts: string[]): Promise<number[][]> {
+    async embed(texts: string[], meta?: EmbedTextMeta[]): Promise<number[][]> {
       if (texts.length === 0) return [];
 
       // Split into batches respecting both item count and token limits
@@ -183,7 +192,10 @@ export function createOpenAIEmbedder(config: EmbedderConfig): Embedder {
 
       for (const batch of batches) {
         const batchTexts = batch.map((item) => item.text);
-        const batchResults = await embedBatchWithFallback(batchTexts);
+        const batchMeta = meta
+          ? batch.map((item) => meta[item.index])
+          : undefined;
+        const batchResults = await embedBatchWithFallback(batchTexts, batchMeta);
 
         // Place results back in their original positions
         for (let j = 0; j < batch.length; j++) {

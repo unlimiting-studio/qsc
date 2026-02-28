@@ -1,5 +1,5 @@
 import type { EmbedderConfig } from "../config/index.js";
-import type { Embedder } from "./index.js";
+import type { Embedder, EmbedTextMeta } from "./index.js";
 
 /**
  * Creates a local model Embedder using node-llama-cpp.
@@ -44,7 +44,7 @@ export function createLocalEmbedder(config: EmbedderConfig): Embedder {
   }
 
   const embedder: Embedder = {
-    async embed(texts: string[]): Promise<number[][]> {
+    async embed(texts: string[], _meta?: EmbedTextMeta[]): Promise<number[][]> {
       if (texts.length === 0) return [];
 
       const context = await getContext();

@@ -326,28 +326,148 @@ export async function createAstChunker(
       let rawChunks = collectChunkNodes(rootNode, langConfig, sourceLines, maxTokens);
       rawChunks = mergeSmallChunks(rawChunks, maxTokens);
 
-      const result: Chunk[] = rawChunks.map((raw) => {
+      // Maximum characters per chunk (~4 chars per token)
+      const maxChars = maxTokens * 4;
+
+      const result: Chunk[] = [];
+      for (const raw of rawChunks) {
         const needsPrefix = importPrefix.length > 0 && !raw.content.trimStart().startsWith("import");
         const finalContent = needsPrefix ? importPrefix + raw.content : raw.content;
 
-        return {
-          content: finalContent,
-          startLine: raw.startLine,
-          endLine: raw.endLine,
-          type: raw.type,
-          name: raw.name,
-          language: langConfig.treeSitterLanguage,
-        };
-      });
+        // If the chunk (with import prefix) exceeds maxTokens, split it
+        if (estimateTokens(finalContent) > maxTokens) {
+          const chunkLines = finalContent.split("\n");
+          let currentLines: string[] = [];
+          let currentStartLine = raw.startLine;
+          let currentTokens = 0;
 
+          for (let li = 0; li < chunkLines.length; li++) {
+            const lineTokens = estimateTokens(chunkLines[li] + "\n");
+
+            // Handle single lines that exceed maxTokens (e.g. minified code)
+            if (lineTokens > maxTokens && currentLines.length === 0) {
+              let offset = 0;
+              while (offset < chunkLines[li].length) {
+                const slice = chunkLines[li].slice(offset, offset + maxChars);
+                if (slice.trim().length > 0) {
+                  result.push({
+                    content: slice,
+                    startLine: raw.startLine + li,
+                    endLine: raw.startLine + li,
+                    type: raw.type,
+                    name: raw.name,
+                    language: langConfig.treeSitterLanguage,
+                  });
+                }
+                offset += maxChars;
+              }
+              continue;
+            }
+
+            if (currentTokens + lineTokens > maxTokens && currentLines.length > 0) {
+              result.push({
+                content: currentLines.join("\n"),
+                startLine: currentStartLine,
+                endLine: currentStartLine + currentLines.length - 1,
+                type: raw.type,
+                name: raw.name,
+                language: langConfig.treeSitterLanguage,
+              });
+              currentLines = [];
+              currentStartLine = raw.startLine + li;
+              currentTokens = 0;
+            }
+            currentLines.push(chunkLines[li]);
+            currentTokens += lineTokens;
+          }
+
+          if (currentLines.length > 0 && currentLines.join("\n").trim().length > 0) {
+            result.push({
+              content: currentLines.join("\n"),
+              startLine: currentStartLine,
+              endLine: currentStartLine + currentLines.length - 1,
+              type: raw.type,
+              name: raw.name,
+              language: langConfig.treeSitterLanguage,
+            });
+          }
+        } else {
+          result.push({
+            content: finalContent,
+            startLine: raw.startLine,
+            endLine: raw.endLine,
+            type: raw.type,
+            name: raw.name,
+            language: langConfig.treeSitterLanguage,
+          });
+        }
+      }
+
+      // Fallback: if AST produced no chunks but content exists, use token-based splitting
       if (result.length === 0 && content.trim().length > 0) {
-        result.push({
-          content,
-          startLine: 1,
-          endLine: sourceLines.length,
-          type: "module",
-          language: langConfig.treeSitterLanguage,
-        });
+        if (estimateTokens(content) <= maxTokens) {
+          result.push({
+            content,
+            startLine: 1,
+            endLine: sourceLines.length,
+            type: "module",
+            language: langConfig.treeSitterLanguage,
+          });
+        } else {
+          // Split oversized fallback content by lines respecting maxTokens
+          let currentLines: string[] = [];
+          let currentStartLine = 1;
+          let currentTokens = 0;
+
+          for (let li = 0; li < sourceLines.length; li++) {
+            const lineTokens = estimateTokens(sourceLines[li] + "\n");
+
+            // Handle single lines that exceed maxTokens
+            if (lineTokens > maxTokens && currentLines.length === 0) {
+              let offset = 0;
+              while (offset < sourceLines[li].length) {
+                const slice = sourceLines[li].slice(offset, offset + maxChars);
+                if (slice.trim().length > 0) {
+                  result.push({
+                    content: slice,
+                    startLine: li + 1,
+                    endLine: li + 1,
+                    type: "block",
+                    language: langConfig.treeSitterLanguage,
+                  });
+                }
+                offset += maxChars;
+              }
+              currentStartLine = li + 2;
+              continue;
+            }
+
+            if (currentTokens + lineTokens > maxTokens && currentLines.length > 0) {
+              result.push({
+                content: currentLines.join("\n"),
+                startLine: currentStartLine,
+                endLine: currentStartLine + currentLines.length - 1,
+                type: "block",
+                language: langConfig.treeSitterLanguage,
+              });
+              currentLines = [];
+              currentStartLine = li + 1;
+              currentTokens = 0;
+            }
+            currentLines.push(sourceLines[li]);
+            currentTokens += lineTokens;
+          }
+
+          if (currentLines.length > 0 && currentLines.join("\n").trim().length > 0) {
+            result.push({
+              content: currentLines.join("\n"),
+              startLine: currentStartLine,
+              endLine: currentStartLine + currentLines.length - 1,
+              type: "block",
+              language: langConfig.treeSitterLanguage,
+            });
+          }
+        }
       }
 
       tree.delete();

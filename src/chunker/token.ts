@@ -44,7 +44,38 @@ export interface TokenChunker {
   chunk(content: string, filePath: string): Chunk[];
 }
 
+/**
+ * Split a single long line into multiple chunks of at most maxChars characters.
+ * Used when a line exceeds maxTokens (e.g. minified JSON/JS).
+ */
+function splitLongLine(
+  line: string,
+  lineNumber: number,
+  maxChars: number,
+  language: string,
+): Chunk[] {
+  const chunks: Chunk[] = [];
+  let offset = 0;
+  while (offset < line.length) {
+    const slice = line.slice(offset, offset + maxChars);
+    if (slice.trim().length > 0) {
+      chunks.push({
+        content: slice,
+        startLine: lineNumber,
+        endLine: lineNumber,
+        type: "block",
+        language,
+      });
+    }
+    offset += maxChars;
+  }
+  return chunks;
+}
+
 export function createTokenChunker(maxTokens: number, overlapRatio: number): TokenChunker {
+  // Maximum characters per chunk (~4 chars per token)
+  const maxChars = maxTokens * 4;
+
   return {
     chunk(content: string, filePath: string): Chunk[] {
       const lines = content.split("\n");
@@ -69,11 +100,24 @@ export function createTokenChunker(maxTokens: number, overlapRatio: number): Tok
       let lineIdx = 0;
 
       while (lineIdx < lines.length) {
+        // Check if the current line alone exceeds maxTokens (e.g. minified file)
+        const firstLineTokens = estimateTokens(lines[lineIdx] + "\n");
+        if (firstLineTokens > maxTokens) {
+          // Split this long line at character boundaries
+          const subChunks = splitLongLine(lines[lineIdx], lineIdx + 1, maxChars, language);
+          chunks.push(...subChunks);
+          lineIdx++;
+          continue;
+        }
+
         // Accumulate lines until we reach maxTokens
         let tokenCount = 0;
         let endIdx = lineIdx;
         while (endIdx < lines.length) {
           const lineTokens = estimateTokens(lines[endIdx] + "\n");
+          // If this single line exceeds maxTokens, stop before it
+          // (it will be handled by the long-line splitter in the next iteration)
+          if (lineTokens > maxTokens && endIdx > lineIdx) break;
           if (tokenCount + lineTokens > maxTokens && endIdx > lineIdx) break;
           tokenCount += lineTokens;
           endIdx++;
