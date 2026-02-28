@@ -24,8 +24,13 @@
   "engines": {
     "node": ">=20"
   },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/unlimiting-studio/qsc.git"
+  },
   "publishConfig": {
-    "access": "public"
+    "access": "public",
+    "provenance": true
   },
   "license": "MIT",
   "dependencies": {
