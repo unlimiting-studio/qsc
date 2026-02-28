@@ -48,6 +48,18 @@ function writeRegistry(registry: CollectionRegistry): void {
   writeFileSync(registryPath, JSON.stringify(registry, null, 2), "utf-8");
 }
 
+// --- Validation ---
+
+const VALID_COLLECTION_NAME = /^[a-zA-Z0-9_-]+$/;
+
+function validateCollectionName(name: string): void {
+  if (!VALID_COLLECTION_NAME.test(name)) {
+    throw new Error(
+      `Invalid collection name '${name}'. Only alphanumeric characters, hyphens, and underscores are allowed.`,
+    );
+  }
+}
+
 // --- Public API ---
 
 export function ensureQscHome(): void {
@@ -62,6 +74,7 @@ export function ensureQscHome(): void {
 }
 
 export function getCollectionDbPath(name: string): string {
+  validateCollectionName(name);
   return join(getCollectionsDir(), `${name}.sqlite`);
 }
 

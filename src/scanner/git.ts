@@ -52,6 +52,10 @@ function parseStatusCode(code: string): GitChange["status"] {
   }
 }
 
+function isValidCommitHash(value: string): boolean {
+  return /^[0-9a-f]{4,40}$/i.test(value);
+}
+
 // --- Public API ---
 
 /**
@@ -89,6 +93,15 @@ export function detectChanges(
   const currentCommit = getCurrentCommit(cwd);
 
   if (!lastCommit) {
+    return {
+      currentCommit,
+      changes: [],
+      isFullScan: true,
+    };
+  }
+
+  // Validate commit hash format to prevent command injection
+  if (!isValidCommitHash(lastCommit)) {
     return {
       currentCommit,
       changes: [],

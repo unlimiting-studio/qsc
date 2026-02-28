@@ -214,6 +214,7 @@ interface Statements {
   insertChunkVector: Statement;
   searchBM25: Statement;
   searchVector: Statement;
+  searchVectorDetail: Statement;
   deactivateFile: Statement;
   deleteOrphanChunks: Statement;
   deleteOrphanVectors: Statement;
@@ -337,6 +338,23 @@ function prepareStatements(db: DatabaseType): Statements {
       FROM vectors_vec v
       WHERE v.embedding MATCH ?
         AND k = ?
+    `),
+
+    searchVectorDetail: db.prepare(`
+      SELECT
+        c.id AS chunk_id,
+        c.file_id,
+        c.content,
+        c.name,
+        c.chunk_type,
+        c.start_line,
+        c.end_line,
+        f.path AS file_path,
+        f.repo_id
+      FROM chunks c
+      JOIN files f ON c.file_id = f.id
+      WHERE c.id = ?
+        AND f.active = 1
     `),
 
     deactivateFile: db.prepare(`
@@ -581,25 +599,9 @@ export function createStore(dbPath: string): Store {
 
       // Step 2: Fetch full chunk details for each result
       const results: VectorResult[] = [];
-      const detailStmt = db.prepare(`
-        SELECT
-          c.id AS chunk_id,
-          c.file_id,
-          c.content,
-          c.name,
-          c.chunk_type,
-          c.start_line,
-          c.end_line,
-          f.path AS file_path,
-          f.repo_id
-        FROM chunks c
-        JOIN files f ON c.file_id = f.id
-        WHERE c.id = ?
-          AND f.active = 1
-      `);
 
       for (const vr of vecResults) {
-        const row = detailStmt.get(vr.chunk_id) as Omit<VectorResult, "distance"> | undefined;
+        const row = stmts!.searchVectorDetail.get(vr.chunk_id) as Omit<VectorResult, "distance"> | undefined;
         if (row) {
           results.push({ ...row, distance: vr.distance });
         }

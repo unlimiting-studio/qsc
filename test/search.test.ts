@@ -299,59 +299,59 @@ async function testFullPipeline() {
     const pipeline = createSearchPipeline(store, embedder, llm);
 
     // BM25 mode
-    const bm25Results = await pipeline.search("authenticate", { mode: "bm25", limit: 5 });
-    assert(bm25Results.length > 0, "BM25 mode returns results");
-    assert(bm25Results[0].scores.rrf !== undefined, "BM25 mode has RRF score");
+    const bm25Response = await pipeline.search("authenticate", { mode: "bm25", limit: 5 });
+    assert(bm25Response.results.length > 0, "BM25 mode returns results");
+    assert(bm25Response.results[0].scores.rrf !== undefined, "BM25 mode has RRF score");
 
     // Vector mode
-    const vecResults = await pipeline.search("database connection", { mode: "vector", limit: 5 });
-    assert(vecResults.length > 0, "Vector mode returns results");
+    const vecResponse = await pipeline.search("database connection", { mode: "vector", limit: 5 });
+    assert(vecResponse.results.length > 0, "Vector mode returns results");
 
     // Hybrid mode
-    const hybridResults = await pipeline.search("authenticate", { mode: "hybrid", limit: 5 });
-    assert(hybridResults.length > 0, "Hybrid mode returns results");
+    const hybridResponse = await pipeline.search("authenticate", { mode: "hybrid", limit: 5 });
+    assert(hybridResponse.results.length > 0, "Hybrid mode returns results");
 
     // Hybrid with expansion
-    const expandedResults = await pipeline.search("authenticate", {
+    const expandedResponse = await pipeline.search("authenticate", {
       mode: "hybrid",
       limit: 5,
       expand: true,
     });
-    assert(expandedResults.length > 0, "Hybrid with expansion returns results");
+    assert(expandedResponse.results.length > 0, "Hybrid with expansion returns results");
 
     // Hybrid with reranking
-    const rerankedResults = await pipeline.search("authenticate", {
+    const rerankedResponse = await pipeline.search("authenticate", {
       mode: "hybrid",
       limit: 5,
       rerank: true,
     });
-    assert(rerankedResults.length > 0, "Hybrid with reranking returns results");
-    assert(rerankedResults[0].scores.rerank !== undefined, "Reranked results have rerank score");
+    assert(rerankedResponse.results.length > 0, "Hybrid with reranking returns results");
+    assert(rerankedResponse.results[0].scores.rerank !== undefined, "Reranked results have rerank score");
 
     // Full pipeline: expand + rerank
-    const fullResults = await pipeline.search("authenticate", {
+    const fullResponse = await pipeline.search("authenticate", {
       mode: "hybrid",
       limit: 5,
       expand: true,
       rerank: true,
     });
-    assert(fullResults.length > 0, "Full pipeline returns results");
+    assert(fullResponse.results.length > 0, "Full pipeline returns results");
 
     // Pipeline without embedder (vector mode should return empty)
     const noEmbPipeline = createSearchPipeline(store);
-    const noVecResults = await noEmbPipeline.search("test", { mode: "vector" });
-    assert(noVecResults.length === 0, "Vector mode without embedder returns empty");
+    const noVecResponse = await noEmbPipeline.search("test", { mode: "vector" });
+    assert(noVecResponse.results.length === 0, "Vector mode without embedder returns empty");
 
     // Pipeline without LLM (expand/rerank should be no-ops)
     const noLlmPipeline = createSearchPipeline(store, embedder);
-    const noLlmResults = await noLlmPipeline.search("authenticate", {
+    const noLlmResponse = await noLlmPipeline.search("authenticate", {
       mode: "hybrid",
       limit: 5,
       expand: true,
       rerank: true,
     });
-    assert(noLlmResults.length > 0, "Pipeline without LLM still returns results");
-    assert(noLlmResults[0].scores.rerank === undefined, "No rerank score without LLM");
+    assert(noLlmResponse.results.length > 0, "Pipeline without LLM still returns results");
+    assert(noLlmResponse.results[0].scores.rerank === undefined, "No rerank score without LLM");
   } finally {
     store.close();
     try { unlinkSync(dbPath); } catch {}

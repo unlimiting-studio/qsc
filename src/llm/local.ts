@@ -12,6 +12,10 @@ export function createLocalLLM(config: LLMConfig): LLMProvider {
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let llamaModule: any = null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let cachedModel: any = null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let cachedContext: any = null;
 
   async function loadLlama(): Promise<any> {
     if (llamaModule) return llamaModule;
@@ -27,12 +31,19 @@ export function createLocalLLM(config: LLMConfig): LLMProvider {
     }
   }
 
+  async function getContext(): Promise<{ context: any; llama: any }> {
+    if (cachedContext) return { context: cachedContext, llama: llamaModule };
+
+    const llama = await loadLlama();
+    const llamaInstance = await llama.getLlama();
+    cachedModel = await llamaInstance.loadModel({ modelPath });
+    cachedContext = await cachedModel.createContext();
+    return { context: cachedContext, llama };
+  }
+
   const provider: LLMProvider = {
     async generate(prompt: string, options?: GenerateOptions): Promise<string> {
-      const llama = await loadLlama();
-      const llamaInstance = await llama.getLlama();
-      const model = await llamaInstance.loadModel({ modelPath });
-      const context = await model.createContext();
+      const { context, llama } = await getContext();
       const session = new llama.LlamaChatSession({
         contextSequence: context.getSequence(),
       });
@@ -42,7 +53,6 @@ export function createLocalLLM(config: LLMConfig): LLMProvider {
         maxTokens: options?.maxTokens,
       });
 
-      await model.dispose();
       return response;
     },
 

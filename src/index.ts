@@ -337,6 +337,8 @@ async function cmdUpdate(positional: string[], flags: Record<string, string | bo
   const store = openStore(dbPath, config);
   const repoId = getRepoId(sourcePath);
 
+  let closed = false;
+
   try {
     const isGit = isGitRepository(sourcePath);
 
@@ -423,6 +425,7 @@ async function cmdUpdate(positional: string[], flags: Record<string, string | bo
           // Auto-embed
           const unembedded = store.getUnembeddedChunks(1);
           store.close();
+          closed = true;
           if (unembedded.length > 0) {
             console.log("Embedding new chunks...");
             await cmdEmbed([name], flags);
@@ -525,13 +528,15 @@ async function cmdUpdate(positional: string[], flags: Record<string, string | bo
     // Auto-embed
     const unembedded = store.getUnembeddedChunks(1);
     store.close();
+    closed = true;
     if (unembedded.length > 0) {
       console.log("Embedding new chunks...");
       await cmdEmbed([name], flags);
     }
-  } catch (err) {
-    store.close();
-    throw err;
+  } finally {
+    if (!closed) {
+      store.close();
+    }
   }
 }
 

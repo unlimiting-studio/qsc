@@ -14,6 +14,10 @@ export function createLocalEmbedder(config: EmbedderConfig): Embedder {
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let llamaModule: any = null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let cachedModel: any = null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let cachedContext: any = null;
 
   async function loadLlama(): Promise<any> {
     if (llamaModule) return llamaModule;
@@ -29,16 +33,21 @@ export function createLocalEmbedder(config: EmbedderConfig): Embedder {
     }
   }
 
+  async function getContext(): Promise<any> {
+    if (cachedContext) return cachedContext;
+
+    const llama = await loadLlama();
+    const llamaInstance = await llama.getLlama();
+    cachedModel = await llamaInstance.loadModel({ modelPath: model });
+    cachedContext = await cachedModel.createEmbeddingContext();
+    return cachedContext;
+  }
+
   const embedder: Embedder = {
     async embed(texts: string[]): Promise<number[][]> {
       if (texts.length === 0) return [];
 
-      const llama = await loadLlama();
-
-      // The actual implementation depends on node-llama-cpp API.
-      const llamaInstance = await llama.getLlama();
-      const llamaModel = await llamaInstance.loadModel({ modelPath: model });
-      const context = await llamaModel.createEmbeddingContext();
+      const context = await getContext();
 
       const results: number[][] = [];
       for (const text of texts) {
@@ -46,7 +55,6 @@ export function createLocalEmbedder(config: EmbedderConfig): Embedder {
         results.push(Array.from(embedding.vector as number[]));
       }
 
-      await llamaModel.dispose();
       return results;
     },
 
