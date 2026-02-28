@@ -1,6 +1,6 @@
 import { extname } from "node:path";
 import { getLanguageConfig } from "./languages/index.js";
-import { createAstChunker } from "./ast.js";
+import { createAstChunker, type AstChunker } from "./ast.js";
 import { createTokenChunker } from "./token.js";
 import type { ChunkerConfig } from "../config/index.js";
 
@@ -22,6 +22,10 @@ export function createChunker(config: ChunkerConfig): Chunker {
   const maxTokens = config.max_tokens;
   const overlap = config.overlap;
 
+  // Cache AstChunker instances per language to reuse tree-sitter Parser objects.
+  // Creating a new Parser for every file leaks WASM memory and causes OOM.
+  const astChunkerCache = new Map<string, AstChunker>();
+
   return {
     async chunk(content: string, filePath: string): Promise<Chunk[]> {
       const ext = extname(filePath).toLowerCase();
@@ -29,7 +33,12 @@ export function createChunker(config: ChunkerConfig): Chunker {
 
       if (langConfig) {
         try {
-          const astChunker = await createAstChunker(langConfig, maxTokens);
+          const cacheKey = langConfig.treeSitterLanguage;
+          let astChunker = astChunkerCache.get(cacheKey);
+          if (!astChunker) {
+            astChunker = await createAstChunker(langConfig, maxTokens);
+            astChunkerCache.set(cacheKey, astChunker);
+          }
           return astChunker.chunk(content, filePath);
         } catch {
           // AST parsing failed, fall through to token chunker

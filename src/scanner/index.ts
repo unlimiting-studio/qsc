@@ -12,6 +12,7 @@ export interface ScannedFile {
   hash: string;          // SHA-256 content hash
   size: number;          // file size in bytes
   language?: string;     // detected language
+  content?: string;      // file content (UTF-8), available when scanner reads the file
 }
 
 export interface ScanResult {
@@ -83,6 +84,18 @@ const EXTENSION_LANGUAGE_MAP: Record<string, string> = {
   ".dockerfile": "dockerfile",
 };
 
+// Known filenames (no extension) that should be treated as source code
+const FILENAME_LANGUAGE_MAP: Record<string, string> = {
+  "Dockerfile": "dockerfile",
+  "Makefile": "makefile",
+  "GNUmakefile": "makefile",
+  "Rakefile": "ruby",
+  "Gemfile": "ruby",
+  "Vagrantfile": "ruby",
+  "Justfile": "makefile",
+  "CMakeLists.txt": "cmake",
+};
+
 export function detectLanguage(filePath: string): string | undefined {
   const ext = extname(filePath).toLowerCase();
   if (ext && EXTENSION_LANGUAGE_MAP[ext]) {
@@ -90,9 +103,29 @@ export function detectLanguage(filePath: string): string | undefined {
   }
   // Check for special filenames
   const base = filePath.split("/").pop() ?? "";
-  if (base === "Dockerfile" || base.startsWith("Dockerfile.")) return "dockerfile";
-  if (base === "Makefile" || base === "GNUmakefile") return "makefile";
+  if (FILENAME_LANGUAGE_MAP[base]) return FILENAME_LANGUAGE_MAP[base];
+  // Handle Dockerfile.* variants
+  if (base.startsWith("Dockerfile.")) return "dockerfile";
   return undefined;
+}
+
+/**
+ * Check if a file path corresponds to a recognized source code file.
+ * Files with extensions in EXTENSION_LANGUAGE_MAP are recognized.
+ * Files without extensions (or with known filenames) are recognized via FILENAME_LANGUAGE_MAP.
+ */
+function isSourceCodeFile(filePath: string): boolean {
+  const ext = extname(filePath).toLowerCase();
+  if (ext && EXTENSION_LANGUAGE_MAP[ext]) {
+    return true;
+  }
+  // Check for special filenames (no extension or known names)
+  const base = filePath.split("/").pop() ?? "";
+  if (FILENAME_LANGUAGE_MAP[base]) return true;
+  if (base.startsWith("Dockerfile.")) return true;
+  // Files without any extension are included (e.g., scripts, config files)
+  if (!ext) return true;
+  return false;
 }
 
 // --- Binary detection ---
@@ -159,6 +192,9 @@ export async function scanRepository(
     // Skip binary files by extension
     if (isBinaryExtension(absolutePath)) continue;
 
+    // Skip non-source-code text files (.txt, .log, .env, .csv, etc.)
+    if (!isSourceCodeFile(absolutePath)) continue;
+
     // Check file size
     let stat;
     try {
@@ -191,6 +227,7 @@ export async function scanRepository(
       hash,
       size: stat.size,
       language,
+      content: content.toString("utf-8"),
     });
 
     totalSize += stat.size;

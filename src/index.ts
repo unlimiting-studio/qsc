@@ -251,7 +251,8 @@ async function cmdIndex(positional: string[], _flags: Record<string, string | bo
         continue;
       }
 
-      const content = readFileSync(file.absolutePath, "utf-8");
+      // Use content from scanner to avoid double file read
+      const content = file.content ?? readFileSync(file.absolutePath, "utf-8");
       const chunks = await chunker.chunk(content, file.path);
 
       store.insertChunks(
@@ -515,7 +516,8 @@ async function cmdUpdate(positional: string[], flags: Record<string, string | bo
         continue;
       }
 
-      const content = readFileSync(file.absolutePath, "utf-8");
+      // Use content from scanner to avoid double file read
+      const content = file.content ?? readFileSync(file.absolutePath, "utf-8");
       const chunks = await chunker.chunk(content, file.path);
 
       store.insertChunks(
