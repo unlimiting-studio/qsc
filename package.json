@@ -1,19 +1,32 @@
 {
-  "name": "qsc",
+  "name": "@unlimiting/qsc",
   "version": "0.1.0",
   "description": "Query Source Code - AST-based code search with hybrid BM25+Vector+LLM reranking",
   "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
   "bin": {
-    "qsc": "./dist/index.js"
+    "qsc": "dist/index.js"
   },
+  "files": [
+    "dist/",
+    "package.json",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "dev": "tsx src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run build"
   },
   "engines": {
     "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
   },
   "license": "MIT",
   "dependencies": {

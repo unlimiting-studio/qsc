@@ -1,0 +1,12 @@
+src/
+tests/
+test/
+.github/
+.claude/
+tsconfig.json
+*.test.ts
+*.spec.ts
+PLAN.md
+.gitignore
+.env
+.env.*
