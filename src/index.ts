@@ -211,10 +211,10 @@ async function cmdInit(positional: string[], flags: Record<string, string | bool
   }
 }
 
-async function cmdIndex(positional: string[], _flags: Record<string, string | boolean>): Promise<void> {
+async function cmdIndex(positional: string[], flags: Record<string, string | boolean>): Promise<void> {
   const name = positional[0];
   if (!name) {
-    console.error("Usage: qsc index <name>");
+    console.error("Usage: qsc index <name> [--rebuild]");
     process.exit(1);
   }
 
@@ -223,8 +223,14 @@ async function cmdIndex(positional: string[], _flags: Record<string, string | bo
   const config = loadConfig(name);
   const store = openStore(dbPath, config);
   const repoId = getRepoId(sourcePath);
+  const rebuild = hasFlag(flags, "rebuild");
 
   try {
+    if (rebuild) {
+      console.log("Rebuilding index...");
+      store.clearAllData();
+    }
+
     console.log(`Scanning ${sourcePath}...`);
     const scanResult = await scanRepository(sourcePath, config.scanner);
     console.log(`Found ${scanResult.files.length} files (${(scanResult.totalSize / 1024).toFixed(1)} KB)`);
@@ -288,7 +294,7 @@ async function cmdIndex(positional: string[], _flags: Record<string, string | bo
 async function cmdEmbed(positional: string[], flags: Record<string, string | boolean>): Promise<void> {
   const name = positional[0];
   if (!name) {
-    console.error("Usage: qsc embed <name>");
+    console.error("Usage: qsc embed <name> [--rebuild]");
     process.exit(1);
   }
 
@@ -296,6 +302,7 @@ async function cmdEmbed(positional: string[], flags: Record<string, string | boo
   const sourcePath = resolveCollectionSourcePath(name);
   const config = loadConfig(name);
   const store = openStore(dbPath, config);
+  const rebuild = hasFlag(flags, "rebuild");
 
   try {
     // Check if there are any chunks at all (i.e., index has been run)
@@ -303,6 +310,11 @@ async function cmdEmbed(positional: string[], flags: Record<string, string | boo
     if (stats.chunks === 0) {
       console.log(`No chunks found. Run \`qsc index ${name}\` first.`);
       return;
+    }
+
+    if (rebuild) {
+      console.log("Rebuilding embeddings...");
+      store.clearAllVectors();
     }
 
     const batchSize = parseInt(getFlag(flags, "batch", "100"), 10);
@@ -880,8 +892,8 @@ Usage: qsc <command> [options]
 
 Commands:
   init <name> <path>                    Create a collection for the source at <path>
-  index <name>                          Index source code (scan -> chunk -> store)
-  embed <name>                          Generate vector embeddings for unembedded chunks
+  index <name> [--rebuild]              Index source code (scan -> chunk -> store)
+  embed <name> [--rebuild]              Generate vector embeddings for unembedded chunks
   update <name>                         Incremental update (hash-based, git-optimized if available)
   search <name> <query>                 BM25 full-text search
   query <name> <query>                  Hybrid search (BM25 + Vector + LLM reranking)
@@ -899,6 +911,7 @@ Commands:
 Options:
   --limit <n>         Max results for search/query (default: 10)
   --batch <n>         Batch size for embed (default: 100)
+  --rebuild           Delete existing data and rebuild from scratch (index/embed)
   --update-cmd <cmd>  Set pre-update command (init command)
   --no-expand         Disable query expansion (query command)
   --no-rerank         Disable LLM reranking (query command)

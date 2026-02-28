@@ -108,6 +108,8 @@ export interface Store {
   searchVector(embedding: Float32Array, limit?: number): VectorResult[];
   deactivateFiles(repoId: string, paths: string[]): void;
   cleanup(): { deletedChunks: number; deletedVectors: number };
+  clearAllData(): void;
+  clearAllVectors(): void;
   getStats(): StoreStats;
   getRepository(repoId: string): RepositoryRow | undefined;
   getActiveFiles(repoId: string): FileRow[];
@@ -669,6 +671,23 @@ export function createStore(dbPath: string): Store {
       txn();
 
       return { deletedChunks, deletedVectors };
+    },
+
+    clearAllData(): void {
+      db.transaction(() => {
+        db.exec(`DELETE FROM vectors_vec`);
+        db.exec(`DELETE FROM chunk_vectors`);
+        db.exec(`INSERT INTO chunks_fts(chunks_fts) VALUES('delete-all')`);
+        db.exec(`DELETE FROM chunks`);
+        db.exec(`DELETE FROM files`);
+      })();
+    },
+
+    clearAllVectors(): void {
+      db.transaction(() => {
+        db.exec(`DELETE FROM vectors_vec`);
+        db.exec(`DELETE FROM chunk_vectors`);
+      })();
     },
 
     getStats(): StoreStats {
