@@ -130,6 +130,49 @@ export function createOpenAIEmbedder(config: EmbedderConfig): Embedder {
     throw lastError;
   }
 
+  /**
+   * Attempts to embed a batch of texts. On failure (e.g. 400 token limit
+   * exceeded), recursively splits the batch in half and retries each half.
+   * When a batch of size 1 still fails, logs a warning and returns a zero
+   * vector so the rest of the pipeline can continue.
+   */
+  async function embedBatchWithFallback(texts: string[]): Promise<number[][]> {
+    try {
+      return await embedBatch(texts);
+    } catch (error: unknown) {
+      // Only apply split-and-retry for 400 errors (token limit exceeded, etc.)
+      const status =
+        error instanceof OpenAI.APIError ? error.status : undefined;
+      if (status !== 400) {
+        throw error;
+      }
+
+      // Single item batch that still fails → skip with zero vector
+      if (texts.length <= 1) {
+        console.warn(
+          `[qsc] Skipping chunk that exceeds token limit (length=${texts[0]?.length ?? 0}). Returning zero vector.`,
+        );
+        return [new Array(dimensions).fill(0)];
+      }
+
+      // Split in half and retry each sub-batch recursively
+      const mid = Math.ceil(texts.length / 2);
+      const firstHalf = texts.slice(0, mid);
+      const secondHalf = texts.slice(mid);
+
+      console.warn(
+        `[qsc] Batch of ${texts.length} texts failed with 400 error. Splitting into [${firstHalf.length}, ${secondHalf.length}] and retrying.`,
+      );
+
+      const [firstResults, secondResults] = await Promise.all([
+        embedBatchWithFallback(firstHalf),
+        embedBatchWithFallback(secondHalf),
+      ]);
+
+      return [...firstResults, ...secondResults];
+    }
+  }
+
   const embedder: Embedder = {
     async embed(texts: string[]): Promise<number[][]> {
       if (texts.length === 0) return [];
@@ -140,7 +183,7 @@ export function createOpenAIEmbedder(config: EmbedderConfig): Embedder {
 
       for (const batch of batches) {
         const batchTexts = batch.map((item) => item.text);
-        const batchResults = await embedBatch(batchTexts);
+        const batchResults = await embedBatchWithFallback(batchTexts);
 
         // Place results back in their original positions
         for (let j = 0; j < batch.length; j++) {
