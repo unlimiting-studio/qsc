@@ -64,12 +64,32 @@ qsc query <name> "REST API endpoints" --limit 5 --benchmark
 BM25 + 벡터 유사도 + RRF 융합 + LLM 쿼리 확장 + LLM 리랭킹.
 임베더 없으면 BM25로 폴백. LLM 없으면 확장/리랭킹 생략.
 
+### 인라인 필터
+
+쿼리 안에 파일 필터를 넣을 수 있다. 같은 종류 포함 필터는 OR, 다른 종류 간은 AND.
+
+```bash
+qsc query <name> "auth path:src ext:.ts"              # src 하위 .ts 파일만
+qsc query <name> "auth -path:vendor -ext:.test.ts"     # vendor, .test.ts 제외
+qsc query <name> "db path:src/api path:src/core"       # src/api OR src/core
+qsc search <name> "config -file:package.json"          # 특정 파일 제외
+```
+
+| 필터 | 포함 | 제외 |
+|------|------|------|
+| 경로 | `path:src/api` | `-path:vendor` |
+| 확장자 | `ext:.ts` | `-ext:.test.ts` |
+| 파일 | `file:config.ts` | `-file:package.json` |
+
+### 옵션
+
 | 플래그 | 설명 |
 |--------|------|
 | `--limit <n>` | 최대 결과 수 (기본 10) |
 | `--no-expand` | LLM 쿼리 확장 비활성화 |
 | `--no-rerank` | LLM 리랭킹 비활성화 |
 | `--benchmark` | 단계별 소요 시간 표시 |
+| `--rebuild` | 기존 데이터 삭제 후 재구축 (index/embed) |
 
 ### 파일/청크 조회
 
