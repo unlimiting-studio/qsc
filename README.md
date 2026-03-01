@@ -2,9 +2,13 @@
 
 AST-based code search with hybrid BM25 + Vector + LLM reranking.
 
+[한국어](README_ko.md)
+
+Inspired by [qmd](https://github.com/tobi/qmd) — adapted for source code with AST-aware chunking, vector embeddings, and hybrid search.
+
 ## What it does
 
-QSC (Query Source Code) chunks source code into semantically meaningful units using AST parsing, stores them in SQLite with FTS5 and vector indexes, and provides hybrid search that combines BM25 keyword matching, vector similarity, and LLM reranking. All data lives in `~/.qsc/` -- nothing is added to your source directories.
+QSC chunks source code into semantically meaningful units using tree-sitter AST parsing, stores them in SQLite with FTS5 and vector indexes, and provides hybrid search combining BM25 keyword matching, vector similarity, and LLM reranking. All data lives in `~/.qsc/` — your source directories stay untouched.
 
 ## Install
 
@@ -17,57 +21,63 @@ Requires Node.js >= 20.
 ## Quick Start
 
 ```bash
-# 1. Create a collection
-qsc init my-project /path/to/repo
-
-# 2. Index source code (scan -> AST chunk -> store)
-qsc index my-project
-
-# 3. Generate vector embeddings (requires OPENAI_API_KEY)
-qsc embed my-project
-
-# 4. Search
-qsc search my-project "createUser function"    # BM25 keyword search
-qsc query my-project "how does auth work"       # hybrid search
+qsc init my-project /path/to/repo          # create collection
+qsc index my-project                        # scan + AST chunk + store
+qsc embed my-project                        # vector embeddings (needs OPENAI_API_KEY)
+qsc search my-project "createUser function" # BM25 keyword search
+qsc query my-project "how does auth work"   # hybrid search
 ```
 
 ## CLI Reference
-
-```
-qsc <command> [options]
-```
 
 ### Indexing
 
 | Command | Description |
 |---------|-------------|
 | `init <name> <path> [--update-cmd <cmd>]` | Create a collection for the source at `<path>` |
-| `index <name>` | Index source code (scan, chunk, store) |
-| `embed <name> [--batch <n>]` | Generate vector embeddings for unembedded chunks. Default batch size: 100 |
-| `update <name>` | Incremental update with git-optimized diffing when available, hash-based fallback otherwise. Auto-embeds new chunks. Runs `updateCommand` first if configured |
+| `index <name> [--rebuild]` | Index source code (scan, chunk, store). `--rebuild` clears all data first |
+| `embed <name> [--batch <n>] [--rebuild]` | Generate vector embeddings. `--rebuild` clears vectors first |
+| `update <name>` | Incremental update: runs pre-update command, detects changes (git-optimized or hash-based), re-indexes, and auto-embeds |
 
 ### Searching
 
 | Command | Description |
 |---------|-------------|
 | `search <name> <query> [--limit <n>] [--benchmark]` | BM25 full-text search. No API key required |
-| `query <name> <query> [--limit <n>] [--no-expand] [--no-rerank] [--benchmark]` | Hybrid search (BM25 + vector + RRF fusion + LLM query expansion + LLM reranking). Falls back to BM25 if embedder is unavailable |
+| `query <name> <query> [--limit <n>] [--no-expand] [--no-rerank] [--benchmark]` | Hybrid search (BM25 + vector + RRF + LLM). Falls back to BM25 if no embedder |
 
-**Search/query options:**
+#### Inline filters
+
+Filter results by path, extension, or filename directly in the query. Same-type includes are OR, cross-type are AND.
+
+```bash
+qsc query my-project "auth path:src ext:.ts"            # src/**/*.ts only
+qsc query my-project "auth -path:vendor -ext:.test.ts"  # exclude vendor and tests
+qsc query my-project "db path:src/api path:src/core"    # src/api OR src/core
+qsc search my-project "config -file:package.json"       # exclude specific file
+```
+
+| Filter | Include | Exclude |
+|--------|---------|---------|
+| Path | `path:src/api` | `-path:vendor` |
+| Extension | `ext:.ts` | `-ext:.test.ts` |
+| File | `file:config.ts` | `-file:package.json` |
+
+#### Options
 
 | Flag | Description |
 |------|-------------|
-| `--limit <n>` | Maximum number of results (default: 10) |
+| `--limit <n>` | Max results (default: 10) |
 | `--no-expand` | Disable LLM query expansion |
 | `--no-rerank` | Disable LLM reranking |
-| `--benchmark` | Print per-stage timing breakdown |
+| `--benchmark` | Print per-stage timing |
 
 ### Inspection
 
 | Command | Description |
 |---------|-------------|
-| `get <name> <file-path>` | Show file metadata and chunk list |
-| `status <name>` | Show index statistics (files, chunks, embedding progress) |
+| `get <name> <file-path>` | Show file metadata and chunks |
+| `status <name>` | Index statistics |
 | `config` | Print current configuration |
 
 ### Collection Management
@@ -75,23 +85,18 @@ qsc <command> [options]
 | Command | Description |
 |---------|-------------|
 | `list` | List all collections |
-| `set-update-cmd <name> <command>` | Set a pre-update shell command (e.g., `git pull`). Omit command to remove |
-| `copy <source> <dest> <path>` | Copy a collection DB to a new collection with a different source path |
-| `import <name> <sqlite-path> <source-path>` | Import an external SQLite DB as a collection |
-| `export <name> <output-path>` | Export a collection's SQLite DB |
+| `set-update-cmd <name> <command>` | Set pre-update command (e.g., `git pull`). Omit command to remove |
+| `copy <source> <dest> <path>` | Copy collection DB with new source path |
+| `import <name> <sqlite-path> <source-path>` | Import external SQLite DB as collection |
+| `export <name> <output-path>` | Export collection DB |
 
-### Other
+### MCP Server
 
-| Command | Description |
-|---------|-------------|
-| `mcp [--collection <name>]` | Start MCP server (stdio transport) |
-| `help` | Show help |
+```bash
+qsc mcp --collection my-project
+```
 
-## MCP Server
-
-QSC exposes an MCP server with tools: `search`, `query`, `get_file`, `get_chunk`, `status`.
-
-### Claude Code
+Tools: `search`, `query`, `get_file`, `get_chunk`, `status`
 
 ```json
 {
@@ -104,20 +109,7 @@ QSC exposes an MCP server with tools: `search`, `query`, `get_file`, `get_chunk`
 }
 ```
 
-### Claude Desktop
-
-```json
-{
-  "mcpServers": {
-    "qsc": {
-      "command": "qsc",
-      "args": ["mcp", "--collection", "my-project"]
-    }
-  }
-}
-```
-
-You can also set the collection via environment variable instead of `--collection`:
+Or via environment variable:
 
 ```json
 {
@@ -125,9 +117,7 @@ You can also set the collection via environment variable instead of `--collectio
     "qsc": {
       "command": "qsc",
       "args": ["mcp"],
-      "env": {
-        "QSC_COLLECTION": "my-project"
-      }
+      "env": { "QSC_COLLECTION": "my-project" }
     }
   }
 }
@@ -135,26 +125,18 @@ You can also set the collection via environment variable instead of `--collectio
 
 ## Configuration
 
-### File locations
-
-All QSC data lives under `~/.qsc/`:
+All data lives under `~/.qsc/`:
 
 ```
 ~/.qsc/
-  config.yml                    # Global config
-  collections.json              # Collection registry
+  config.yml                    # global defaults
+  collections.json              # collection registry
   collections/
-    <name>.sqlite               # SQLite database per collection
-    <name>.yml                  # Per-collection config override
+    <name>.sqlite               # database
+    <name>.yml                  # per-collection overrides
 ```
 
-### Priority (lowest to highest)
-
-1. `~/.qsc/config.yml` -- global defaults
-2. `~/.qsc/collections/<name>.yml` -- per-collection overrides
-3. Environment variables -- highest priority
-
-### Config schema
+Priority: `~/.qsc/config.yml` < `~/.qsc/collections/<name>.yml` < environment variables
 
 ```yaml
 embedder:
@@ -164,7 +146,7 @@ embedder:
   dimensions: 1536
 
 llm:
-  provider: openai              # openai | local
+  provider: openai
   model: gpt-5-nano
   api_key_env: OPENAI_API_KEY
 
@@ -177,40 +159,32 @@ scanner:
     - "node_modules/**"
     - ".git/**"
     - "dist/**"
+    - "build/**"
+    - "vendor/**"
     - "*.min.js"
-  max_file_size: 1048576        # bytes (1 MB)
+    - "*.lock"
+  max_file_size: 1048576        # 1MB
 ```
 
 ### Environment variables
 
 | Variable | Overrides |
 |----------|-----------|
-| `QSC_COLLECTION` | Default collection name for MCP server |
+| `QSC_COLLECTION` | Default collection for MCP server |
 | `QSC_EMBEDDER_PROVIDER` | `embedder.provider` |
 | `QSC_EMBEDDER_MODEL` | `embedder.model` |
-| `QSC_EMBEDDER_API_KEY_ENV` | `embedder.api_key_env` |
 | `QSC_EMBEDDER_DIMENSIONS` | `embedder.dimensions` |
 | `QSC_LLM_PROVIDER` | `llm.provider` |
 | `QSC_LLM_MODEL` | `llm.model` |
-| `QSC_LLM_API_KEY_ENV` | `llm.api_key_env` |
 | `QSC_CHUNKER_MAX_TOKENS` | `chunker.max_tokens` |
 | `QSC_CHUNKER_OVERLAP` | `chunker.overlap` |
 | `QSC_SCANNER_MAX_FILE_SIZE` | `scanner.max_file_size` |
 
 ## Supported Languages
 
-AST-based chunking (via tree-sitter) is supported for:
+AST chunking (tree-sitter): TypeScript, TSX/JSX, JavaScript, Python, Go, Dart, Kotlin, Swift.
 
-- TypeScript (`.ts`)
-- TSX / JSX (`.tsx`, `.jsx`)
-- JavaScript (`.js`)
-- Python (`.py`)
-- Go (`.go`)
-- Dart (`.dart`)
-- Kotlin (`.kt`, `.kts`)
-- Swift (`.swift`)
-
-All other file types fall back to token-based chunking, which splits by token count with configurable overlap.
+All other file types use token-based fallback chunking.
 
 ## License
 
